@@ -1,0 +1,4 @@
+1) i wanna load the musics from a local folder name my musics 
+2) first i need to grab the titles of the files and store them somewhere maybe in a txt file 
+3) then i need to check if there is a new file added compare to last check
+4) if yes ==> (post the new files in a certain time to the channel) if no --> (just print there is no new files added)
