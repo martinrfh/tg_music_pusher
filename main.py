@@ -7,13 +7,13 @@ import asyncio
 
 # Load environment variables
 load_dotenv()
-tg_bot_token = os.getenv("tg_bot_token")
-CHAT_ID = '@deadbutterflly'
+BOT_TOKEN = os.getenv("tg_bot_token")
+CHAT_ID = os.getenv("chat_id")
 
 # Paths and settings
-log_path = "songs_log.txt"
-music_dir = "./music_playlist"
-included_extensions = ['mp3', 'wav', 'wave', 'flac', 'aac', 'm4a', 'alac']
+LOG_FILE = "songs_log.txt"
+MUSIC_DIR = "./music_playlist"
+SUPPORTED_EXTENSIONS = ['mp3', 'wav', 'wave', 'flac', 'aac', 'm4a', 'alac']
 
 
 def get_new_files(directory, log_path, extensions):
@@ -44,8 +44,8 @@ def update_file_log(log_path, files):
 
 
 async def send_file(title, artist, file_path):
-    bot = Bot(token=tg_bot_token)
-    print(f"Sending: {file_path}")
+    bot = Bot(token=BOT_TOKEN)
+    print(f"📤 Uploading: {os.path.basename(file_path)}")
     try:
         with open(file_path, "rb") as audio:
             await bot.send_audio(
@@ -55,8 +55,11 @@ async def send_file(title, artist, file_path):
                 performer=artist,
                 caption='@deadbutterflly'
             )
+        print(f"✅ Successfully uploaded: {os.path.basename(file_path)}")
+        return True
     except Exception as e:
-        print(f"[ERROR] Failed to send '{file_path}': {e}")
+        print(f"❌ Failed to upload {os.path.basename(file_path)}: {str(e)}")
+        return False
 
 
 def get_audio_metadata(file_path):
@@ -69,22 +72,34 @@ def get_audio_metadata(file_path):
             artist.text[0] if artist else "Unknown Artist"
         )
     except Exception as e:
-        print(f"[ERROR] Reading metadata: {file_path} → {e}")
+        print(
+            f"❌ Error reading metadata for {os.path.basename(file_path)}: {e}")
         return os.path.basename(file_path), "Unknown Artist"
 
 
 # === MAIN SCRIPT ===
+print("🎵 Starting music upload process...")
 
-new_files = get_new_files(music_dir, log_path, included_extensions)
+new_files = get_new_files(MUSIC_DIR, LOG_FILE, SUPPORTED_EXTENSIONS)
 
 if new_files:
-    print("New music found:", new_files)
+    print(f"📁 Found {len(new_files)} new files to process")
+    uploaded_files = []
 
-    for filename in new_files:
-        file_path = os.path.join(music_dir, filename)
+    for file in new_files:
+        file_path = os.path.join(MUSIC_DIR, file)
         title, artist = get_audio_metadata(file_path)
-        asyncio.run(send_file(title, artist, file_path))
 
-    update_file_log(log_path, new_files)
+        if asyncio.run(send_file(title, artist, file_path)):
+            uploaded_files.append(file)
+        else:
+            print(f"⚠️ Skipping {file} due to upload failure")
+
+    if uploaded_files:
+        update_file_log(LOG_FILE, uploaded_files)
+        print(
+            f"✅ Upload complete: {len(uploaded_files)} files uploaded successfully")
+    else:
+        print("❌ No files were successfully uploaded")
 else:
-    print("No new music files in the folder.")
+    print("📂 No new music files found in the folder")
