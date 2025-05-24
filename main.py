@@ -1,3 +1,4 @@
+from telegram import Bot
 from dotenv import load_dotenv
 from telegram import Bot
 from mutagen.mp3 import MP3
@@ -5,15 +6,15 @@ from mutagen.id3 import ID3
 import os
 import asyncio
 
-# Load environment variables
+
+# === Configuration ===
 load_dotenv()
 BOT_TOKEN = os.getenv("tg_bot_token")
 CHAT_ID = os.getenv("chat_id")
-
-# Paths and settings
 LOG_FILE = "songs_log.txt"
 MUSIC_DIR = "./music_playlist"
 SUPPORTED_EXTENSIONS = ['mp3', 'wav', 'wave', 'flac', 'aac', 'm4a', 'alac']
+MAX_RETRIES = 3
 
 
 def get_new_files(directory, log_path, extensions):
@@ -43,23 +44,30 @@ def update_file_log(log_path, files):
             f.write(file + "\n")
 
 
-async def send_file(title, artist, file_path):
-    bot = Bot(token=BOT_TOKEN)
+async def send_file(bot, title, artist, file_path, retries=0):
     print(f"📤 Uploading: {os.path.basename(file_path)}")
-    try:
-        with open(file_path, "rb") as audio:
-            await bot.send_audio(
-                chat_id=CHAT_ID,
-                audio=audio,
-                title=title,
-                performer=artist,
-                caption='@deadbutterflly'
-            )
-        print(f"✅ Successfully uploaded: {os.path.basename(file_path)}")
-        return True
-    except Exception as e:
-        print(f"❌ Failed to upload {os.path.basename(file_path)}: {str(e)}")
-        return False
+
+    while retries < MAX_RETRIES:
+        try:
+            with open(file_path, "rb") as audio:
+                await bot.send_audio(
+                    chat_id=CHAT_ID,
+                    audio=audio,
+                    title=title,
+                    performer=artist,
+                    caption='@deadbutterflly'
+                )
+            print(f"✅ Successfully uploaded: {os.path.basename(file_path)}")
+            return True
+
+        except Exception as e:
+            print(
+                f"❌ Failed to upload {os.path.basename(file_path)} (Attempt {retries + 1}/3): {str(e)}")
+            retries += 1
+            await asyncio.sleep(2 ** retries)
+
+    print(f"🚫 Giving up on {os.path.basename(file_path)} after 3 attempts.")
+    return False
 
 
 def get_audio_metadata(file_path):
@@ -78,28 +86,33 @@ def get_audio_metadata(file_path):
 
 
 # === MAIN SCRIPT ===
-print("🎵 Starting music upload process...")
+async def main():
+    print("🎵 Starting music upload process...")
+    new_files = get_new_files(MUSIC_DIR, LOG_FILE, SUPPORTED_EXTENSIONS)
+    bot = Bot(token=BOT_TOKEN)
 
-new_files = get_new_files(MUSIC_DIR, LOG_FILE, SUPPORTED_EXTENSIONS)
+    if new_files:
+        print(f"📁 Found {len(new_files)} new files to process")
+        uploaded_files = []
 
-if new_files:
-    print(f"📁 Found {len(new_files)} new files to process")
-    uploaded_files = []
+        for file in new_files:
+            file_path = os.path.join(MUSIC_DIR, file)
+            title, artist = get_audio_metadata(file_path)
+            success = await send_file(bot, title, artist, file_path)
+            if success:
+                uploaded_files.append(file)
+            else:
+                print(f"⚠️ Skipping {file} due to repeated upload failure.")
 
-    for file in new_files:
-        file_path = os.path.join(MUSIC_DIR, file)
-        title, artist = get_audio_metadata(file_path)
-
-        if asyncio.run(send_file(title, artist, file_path)):
-            uploaded_files.append(file)
+        if uploaded_files:
+            update_file_log(LOG_FILE, uploaded_files)
+            print(
+                f"✅ Upload complete: {len(uploaded_files)} files uploaded successfully")
         else:
-            print(f"⚠️ Skipping {file} due to upload failure")
-
-    if uploaded_files:
-        update_file_log(LOG_FILE, uploaded_files)
-        print(
-            f"✅ Upload complete: {len(uploaded_files)} files uploaded successfully")
+            print("❌ No files were successfully uploaded")
     else:
-        print("❌ No files were successfully uploaded")
-else:
-    print("📂 No new music files found in the folder")
+        print("📂 No new music files found in the folder")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
