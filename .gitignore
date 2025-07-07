@@ -1,4 +1,4 @@
 .env
 /venv
 /music_playlist
-songs_log.txt
+*.db

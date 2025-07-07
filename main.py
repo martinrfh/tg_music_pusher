@@ -1,10 +1,14 @@
-from telegram.ext import Application
-from openai import OpenAI
+import os
+import asyncio
+import sqlite3
+from datetime import datetime
+from pathlib import Path
+
 from dotenv import load_dotenv
 from mutagen.mp3 import MP3
 from mutagen.id3 import ID3
-import os
-import asyncio
+from openai import OpenAI
+from telegram.ext import Application
 
 
 # === Configuration ===
@@ -12,9 +16,10 @@ load_dotenv()
 BOT_TOKEN = os.getenv("tg_bot_token")
 AI_TOKEN = os.getenv("openai_token")
 CHAT_ID = os.getenv("chat_id")
-LOG_FILE = "songs_log.txt"
-MUSIC_DIR = "./music_playlist"
-SUPPORTED_EXTENSIONS = ['mp3', 'wav', 'wave', 'flac', 'aac', 'm4a', 'alac']
+MUSIC_DIR = Path("./music_playlist")
+DATABASE_NAME = "my_playlist.db"
+SUPPORTED_EXTENSIONS = ['.mp3', '.wav',
+                        '.wave', '.flac', '.aac', '.m4a', '.alac']
 MAX_RETRIES = 3
 TIMEOUT = 600  # 10 minutes timeout
 
@@ -24,31 +29,57 @@ client = OpenAI(
 )
 
 
-def get_new_files(directory, log_path, extensions):
-    all_files = [
-        f for f in os.listdir(directory)
-        if os.path.isfile(os.path.join(directory, f))
-    ]
+def initialize_database(database_name):
+    try:
+        conn = sqlite3.connect(database_name)
+        cursor = conn.cursor()
 
-    extensions = [ext.lower() for ext in extensions]
-    filtered = [
-        f for f in all_files if f.lower().split('.')[-1] in extensions
-    ]
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS playlist_songs (
+            artist TEXT NOT NULL,
+            song TEXT NOT NULL,
+            file_path TEXT NOT NULL,
+            uploaded_at TEXT 
+        );
+        """)
 
-    if os.path.exists(log_path):
-        with open(log_path, "r", encoding="utf-8") as f:
-            logged = f.read().splitlines()
-    else:
-        logged = []
+        conn.commit()
+        print("[+] Database initialized.")
+        return conn, cursor
 
-    new_files = list(set(filtered) - set(logged))
+    except Exception as e:
+        print(f"[!] Error initializing database: {e}")
+        return None, None
+
+
+connection, cursor = initialize_database(DATABASE_NAME)
+
+
+def get_new_files():
+    all_files = []
+    for file in MUSIC_DIR.iterdir():
+        if file.is_file and file.suffix.lower() in SUPPORTED_EXTENSIONS:
+            all_files.append(str(file))
+
+    cursor.execute("SELECT file_path FROM playlist_songs")
+    logged_files = [row[0] for row in cursor.fetchall()]
+
+    new_files = list(set(all_files) - set(logged_files))
     return new_files
 
 
-def update_file_log(log_path, files):
-    with open(log_path, "a", encoding="utf-8") as f:
-        for file in files:
-            f.write(file + "\n")
+def add_song_to_playlist(title, artist, file_path):
+    now = datetime.now()
+    uploaded_at = now.strftime("%Y-%m-%d")
+    try:
+        cursor.execute(
+            "INSERT INTO playlist_songs (artist, song, file_path, uploaded_at) VALUES (?, ?, ? ,?)",
+            (artist, title, file_path, uploaded_at)
+        )
+        connection.commit()
+        print(f"[+] Added: {title} by {artist}")
+    except Exception as e:
+        print(f"[!] Error adding song: {e}")
 
 
 def get_audio_metadata(file_path):
@@ -167,7 +198,7 @@ async def send_file(app, title, artist, file_path, retries=0):
 # === MAIN SCRIPT ===
 async def main():
     print("🎵 Starting music upload process...")
-    new_files = get_new_files(MUSIC_DIR, LOG_FILE, SUPPORTED_EXTENSIONS)
+    new_files = get_new_files()
 
     # Use a context manager to handle the bot's lifecycle:
     # context manager : which are Python objects that need to do something before and after a block of code.
@@ -176,18 +207,17 @@ async def main():
             print(f"📁 Found {len(new_files)} new files to process")
             uploaded_files = []
 
-            for file in new_files:
-                file_path = os.path.join(MUSIC_DIR, file)
+            for file_path in new_files:
                 title, artist = get_audio_metadata(file_path)
                 success = await send_file(app, title, artist, file_path)
                 if success:
-                    uploaded_files.append(file)
+                    add_song_to_playlist(title, artist, file_path)
+                    uploaded_files.append(file_path)
                 else:
                     print(
-                        f"⚠️ Skipping {file} due to repeated upload failure.")
+                        f"⚠️ Skipping {title} song by {artist} due to repeated upload failure.")
 
             if uploaded_files:
-                update_file_log(LOG_FILE, uploaded_files)
                 print(
                     f"✅ Upload complete: {len(uploaded_files)} files uploaded successfully")
             else:
@@ -197,4 +227,8 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    finally:
+        connection.close()
+        print("[+] Database connection closed.")
