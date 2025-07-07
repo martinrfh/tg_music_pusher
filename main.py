@@ -44,7 +44,6 @@ def initialize_database(database_name):
         """)
 
         conn.commit()
-        print("[+] Database initialized.")
         return conn, cursor
 
     except Exception as e:
@@ -58,7 +57,7 @@ connection, cursor = initialize_database(DATABASE_NAME)
 def get_new_files():
     all_files = []
     for file in MUSIC_DIR.iterdir():
-        if file.is_file and file.suffix.lower() in SUPPORTED_EXTENSIONS:
+        if file.is_file() and file.suffix.lower() in SUPPORTED_EXTENSIONS:
             all_files.append(str(file))
 
     cursor.execute("SELECT file_path FROM playlist_songs")
@@ -77,7 +76,6 @@ def add_song_to_playlist(title, artist, file_path):
             (artist, title, file_path, uploaded_at)
         )
         connection.commit()
-        print(f"[+] Added: {title} by {artist}")
     except Exception as e:
         print(f"[!] Error adding song: {e}")
 
@@ -195,6 +193,13 @@ async def send_file(app, title, artist, file_path, retries=0):
     return False
 
 
+def has_been_uploaded(title, artist):
+    cursor.execute(
+        "SELECT song, artist FROM playlist_songs WHERE song = ? AND artist = ?", (title, artist))
+    result = cursor.fetchone()
+    return bool(result)
+
+
 # === MAIN SCRIPT ===
 async def main():
     print("🎵 Starting music upload process...")
@@ -205,23 +210,19 @@ async def main():
     async with Application.builder().token(BOT_TOKEN).build() as app:
         if new_files:
             print(f"📁 Found {len(new_files)} new files to process")
-            uploaded_files = []
 
             for file_path in new_files:
                 title, artist = get_audio_metadata(file_path)
+                if has_been_uploaded(title, artist):
+                    print(
+                        f"⏭️ Skipping (already uploaded): {title} — {artist}")
+                    continue
                 success = await send_file(app, title, artist, file_path)
                 if success:
                     add_song_to_playlist(title, artist, file_path)
-                    uploaded_files.append(file_path)
                 else:
                     print(
                         f"⚠️ Skipping {title} song by {artist} due to repeated upload failure.")
-
-            if uploaded_files:
-                print(
-                    f"✅ Upload complete: {len(uploaded_files)} files uploaded successfully")
-            else:
-                print("❌ No files were successfully uploaded")
         else:
             print("📂 No new music files found in the folder")
 
@@ -231,4 +232,3 @@ if __name__ == "__main__":
         asyncio.run(main())
     finally:
         connection.close()
-        print("[+] Database connection closed.")
