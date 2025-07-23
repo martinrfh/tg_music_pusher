@@ -11,7 +11,7 @@ It's designed to save time and automate repetitive uploads. More features will b
 - ✅ Automatically finds and uploads new audio files
 - ✅ Supports `.mp3`, `.flac`, `.m4a`, `.wav`, and more
 - ✅ Extracts and uses metadata (title, artist)
-- ✅ Skips files already uploaded using a log file
+- ✅ Tracks uploaded files using SQLite database
 - ✅ Retries failed uploads with exponential backoff
 - ✅ Built using `python-telegram-bot` (v22+) with async support
 - ✅ Timeout handling for slow connections
