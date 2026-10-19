@@ -1,6 +1,8 @@
 import os
 import asyncio
-import sqlite3
+from sqlalchemy import String, create_engine, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, Session
 from datetime import datetime
 from pathlib import Path
 
@@ -32,41 +34,43 @@ client = OpenAI(
 )
 
 
-def initialize_database(database_name):
-    try:
-        conn = sqlite3.connect(database_name)
-        cursor = conn.cursor()
-
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS playlist_songs (
-            artist TEXT NOT NULL,
-            song TEXT NOT NULL,
-            file_path TEXT NOT NULL,
-            uploaded_at TEXT,
-            UNIQUE(artist, song)
-        );
-        """)
-
-        conn.commit()
-        return conn, cursor
-
-    except Exception as e:
-        print(f"[!] Error initializing database: {e}")
-        return None, None
+engine = create_engine(f"sqlite:///{BASE_DIR / DATABASE_NAME}")
 
 
-connection, cursor = initialize_database(DATABASE_NAME)
+class Base(DeclarativeBase):
+    pass
+
+
+class Song(Base):
+    __tablename__ = "playlist_songs"
+
+    artist: Mapped[str] = mapped_column(String, primary_key=True)
+    song: Mapped[str] = mapped_column(String, primary_key=True)
+    file_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    uploaded_at: Mapped[str | None] = mapped_column(nullable=True)
+
+
+Base.metadata.create_all(engine)
 
 
 def add_song_to_playlist(title, artist, file_path):
-    now = datetime.now()
-    uploaded_at = now.strftime("%Y-%m-%d")
+    uploaded_at = datetime.now().strftime("%Y-%m-%d")
+
     try:
-        cursor.execute(
-            "INSERT OR IGNORE INTO playlist_songs (artist, song, file_path, uploaded_at) VALUES (?, ?, ?, ?)",
-            (artist, title, file_path, uploaded_at)
-        )
-        connection.commit()
+        with Session(engine) as session:
+            new_song = Song(
+                song=title,
+                artist=artist,
+                file_path=file_path,
+                uploaded_at=uploaded_at
+            )
+
+            session.add(new_song)
+            session.commit()
+
+    except IntegrityError:
+        # Same duplicate-safe behavior as the old "INSERT OR IGNORE"
+        print(f"⚠️ Song already in playlist: '{title} — {artist}'")
     except Exception as e:
         print(f"[!] Error adding song '{title} — {artist}': {e}")
 
@@ -226,13 +230,16 @@ async def send_file(app, title, artist, file_path, retries=0):
 
 
 def has_been_uploaded(title, artist):
-    cursor.execute(
-        "SELECT song, artist FROM playlist_songs WHERE song = ? AND artist = ?", (title, artist))
-    result = cursor.fetchone()
-    return bool(result)
+    with Session(engine) as session:
+        statement = select(Song).where(
+            Song.song == title, Song.artist == artist)
+        song = session.scalars(statement).first()
 
+        return bool(song)
 
 # === MAIN SCRIPT ===
+
+
 async def main():
     print("🎵 Starting music upload process...")
 
@@ -274,4 +281,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     finally:
-        connection.close()
+        engine.dispose()
